@@ -428,7 +428,7 @@ async function streamAIResponse(c) {
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({ model, max_tokens: 2000, system: sys, messages: msgs, stream: true }),
+      body: JSON.stringify({ model, max_tokens: 3000, system: sys, messages: msgs, stream: true }),
       signal: abortController.signal,
     });
 
