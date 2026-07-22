@@ -105,7 +105,7 @@
         class="w-full bg-transparent text-sm text-gray-800 placeholder-gray-400"
         oninput="autoResize(this)" onkeydown="handleChatKeydown(event)"></textarea>
     </div>
-    <button id="send-btn" onclick="sendMessage()" class="send-btn flex items-center justify-center">
+    <button id="send-btn" onclick="sendMessage()" ontouchend="event.preventDefault();sendMessage()" class="send-btn flex items-center justify-center" style="touch-action:manipulation;-webkit-tap-highlight-color:rgba(0,0,0,0);">
       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
     </button>
   </div>
