@@ -18,8 +18,11 @@
   .tab-btn.active { background: #1a1a1a; color: white; }
   .memory-item { border-bottom: 1px solid #e5e5e5; }
   .memory-item:last-child { border-bottom: none; }
+  .plan-badge-hyper { background: #fff0e0; color: #c2410c; border: 1px solid #ea580c; }
   .plan-badge-prime { background: #e8f4e8; color: #2d7a2d; border: 1px solid #2d7a2d; }
   .plan-badge-ultra { background: #f0e8ff; color: #6b2db8; border: 1px solid #8b4fd8; }
+  .plan-badge-boost { background: #e0f2fe; color: #0369a1; border: 1px solid #0284c7; }
+  .plan-badge-power { background: #fef9c3; color: #854d0e; border: 1px solid #ca8a04; }
   .send-btn { background: #22c55e; border-radius: 50%; width: 44px; height: 44px; flex-shrink: 0; }
   .send-btn.active { background: #16a34a; }
   textarea { resize: none; outline: none; }
@@ -32,6 +35,9 @@
   .slide-up { animation: slideUp 0.3s ease-out; }
   @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
   .prose-ai { line-height: 1.9; font-size: 15px; white-space: pre-wrap; }
+  .user-situation { color: #d1d5db; font-style: italic; font-size: 13px; }
+  .user-dialog { color: white; font-size: 15px; }
+  .format-hint { font-size: 11px; color: #9ca3af; padding: 4px 8px; }
   .header-bar { background: white; border-bottom: 1px solid #e5e5e5; padding: 12px 16px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
   .avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: white; font-size: 14px; font-weight: bold; }
   .input-bar { background: white; border-top: 1px solid #e5e5e5; padding: 10px 12px; display: flex; align-items: flex-end; gap: 8px; }
@@ -95,7 +101,7 @@
       <button onclick="addManualMemory()" class="tool-btn" title="メモリー追加">＋</button>
     </div>
     <div class="flex-1 bg-gray-100 rounded-2xl px-3 py-2">
-      <textarea id="chat-input" rows="1" placeholder="チャットを入力してください"
+      <textarea id="chat-input" rows="1" placeholder="**シチュエーション** 「セリフ」"
         class="w-full bg-transparent text-sm text-gray-800 placeholder-gray-400"
         oninput="autoResize(this)" onkeydown="handleChatKeydown(event)"></textarea>
     </div>
@@ -164,8 +170,11 @@
       <div>
         <p class="char-setup-label">プラン</p>
         <select id="new-plan" class="char-setup-input">
-          <option value="prime">プライム</option>
-          <option value="ultra">ウルトラ</option>
+          <option value="hyper">⚡ ハイパー — 多様なジャンルを上質体験</option>
+          <option value="prime">💬 プライム — 賢く自然な会話</option>
+          <option value="ultra">✨ ウルトラ — シミュレーションに最適</option>
+          <option value="boost">🚀 ブースト — ロマンスや会話をカジュアルに</option>
+          <option value="power">🔥 パワー — 日常の雑談に</option>
         </select>
       </div>
     </div>
@@ -286,7 +295,7 @@ function renderCharList() {
           <div class="text-xs text-gray-400 truncate">${escHtml(c.storyTitle || 'ストーリー未設定')}</div>
           <div class="text-xs text-gray-300 mt-0.5">${c.messages.length}件のメッセージ</div>
         </div>
-        <span class="${c.plan === 'ultra' ? 'plan-badge-ultra' : 'plan-badge-prime'} text-xs px-2 py-0.5 rounded-full">${c.plan === 'ultra' ? 'ウルトラ' : 'プライム'}</span>
+        <span class="plan-badge-${c.plan||'hyper'} text-xs px-2 py-0.5 rounded-full">${{hyper:'ハイパー',prime:'プライム',ultra:'ウルトラ',boost:'ブースト',power:'パワー'}[c.plan]||'ハイパー'}</span>
       </div>
     </div>
   `).join('');
@@ -334,8 +343,9 @@ function openChat(charId) {
   document.getElementById('chat-char-name').textContent = char.name;
   document.getElementById('chat-story-title').textContent = char.storyTitle || 'ストーリー';
   const badge = document.getElementById('plan-badge');
-  badge.textContent = char.plan === 'ultra' ? 'ウルトラ' : 'プライム';
-  badge.className = char.plan === 'ultra' ? 'plan-badge-ultra text-xs px-2 py-0.5 rounded-full font-medium' : 'plan-badge-prime text-xs px-2 py-0.5 rounded-full font-medium';
+  const planNames = { hyper:'ハイパー', prime:'プライム', ultra:'ウルトラ', boost:'ブースト', power:'パワー' };
+  badge.textContent = planNames[char.plan] || 'ハイパー';
+  badge.className = `plan-badge-${char.plan || 'hyper'} text-xs px-2 py-0.5 rounded-full font-medium`;
   document.getElementById('chat-avatar').textContent = char.name[0];
   document.getElementById('chat-avatar').style.background = char.color;
   renderMessages();
@@ -356,7 +366,7 @@ function renderMessages() {
   el.innerHTML = char.messages.map((m, i) => {
     if (m.role === 'user') {
       return `<div class="flex justify-end mb-3">
-        <div class="chat-bubble-user px-4 py-3 max-w-[80%] text-sm leading-relaxed">${escHtml(m.content)}</div>
+        <div class="chat-bubble-user px-4 py-3 max-w-[80%] text-sm leading-relaxed">${formatUserMsg(m.content)}</div>
       </div>`;
     } else {
       return `<div class="flex gap-2 mb-4">
@@ -444,7 +454,7 @@ async function sendMessage() {
         'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({
-        model: state.settings.model || 'claude-sonnet-4-6',
+        model: planToModel(char.plan),
         max_tokens: 1024,
         system: systemPrompt,
         messages,
@@ -547,8 +557,14 @@ ${char.userName}
 【返答スタイル】
 ${styleGuide[char.aiStyle] || styleGuide.novel}
 
-ユーザーが送るのはシチュエーションやセリフの断片です。それを受け取り、ストーリーとして膨らませて返答してください。
-ユーザーの意図を汲み取り、キャラクターとして自然に反応してください。
+【入力フォーマット】
+ユーザーは以下の形式で送信します：
+- **シチュエーション** → **で囲まれた部分は場面・行動・状況の描写
+- 「セリフ」 → 「」で囲まれた部分は主人公みきのセリフ
+これらを組み合わせて送ることもあります。
+
+それを受け取り、ストーリーとして膨らませて小説文体で返答してください。
+ユーザーの意図を汲み取り、登場キャラクターとして自然に反応してください。
 
 ${memories ? `【記憶・ストーリーの記録】\n${memories}` : ''}
 
@@ -836,6 +852,27 @@ function deleteCurrentChar() {
 }
 
 // ==================== UTILS ====================
+function planToModel(plan) {
+  const map = {
+    hyper: 'claude-opus-4-8',
+    prime: 'claude-sonnet-4-6',
+    ultra: 'claude-sonnet-4-6',
+    boost: 'claude-haiku-4-5-20251001',
+    power: 'claude-haiku-4-5-20251001',
+  };
+  return map[plan] || 'claude-opus-4-8';
+}
+
+function formatUserMsg(str) {
+  // **...** → シチュエーション（薄いイタリック）、「...」→ セリフ（白・通常）
+  return str.split('\n').map(line => {
+    line = line
+      .replace(/\*\*(.+?)\*\*/g, '<span class="user-situation">$1</span>')
+      .replace(/「(.+?)」/g, '<span class="user-dialog">「$1」</span>');
+    return line;
+  }).join('<br>');
+}
+
 function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/\n/g,'<br>');
 }
