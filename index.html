@@ -91,6 +91,22 @@ select.field-input { cursor: pointer; }
 
 /* スクロールダウンボタン */
 .scroll-down { position: absolute; bottom: 80px; right: 16px; width: 36px; height: 36px; border-radius: 50%; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.15); display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 10; touch-action: manipulation; }
+
+/* メッセージアクションボタン */
+.msg-actions { display: flex; gap: 6px; margin-top: 4px; }
+.msg-action-btn { font-size: 11px; padding: 3px 10px; border-radius: 12px; border: 1px solid #e5e7eb; background: white; color: #9ca3af; cursor: pointer; touch-action: manipulation; white-space: nowrap; }
+.msg-action-btn:active { background: #f3f4f6; }
+.msg-action-btn.danger { color: #f87171; border-color: #fecaca; }
+
+/* 編集モード */
+.edit-mode-wrap { background: #f9fafb; border-radius: 12px; padding: 10px; margin-top: 4px; }
+.edit-mode-wrap textarea { width: 100%; border: 1.5px solid #8b4fd8; border-radius: 8px; padding: 8px 10px; font-size: 14px; line-height: 1.5; font-family: inherit; color: #1f2937; background: white; resize: none; outline: none; }
+.edit-mode-actions { display: flex; gap: 8px; margin-top: 6px; }
+.edit-confirm-btn { flex: 1; padding: 7px; background: #1f2937; color: white; border: none; border-radius: 10px; font-size: 13px; cursor: pointer; touch-action: manipulation; }
+.edit-cancel-btn { padding: 7px 14px; border: 1px solid #e5e7eb; background: white; color: #6b7280; border-radius: 10px; font-size: 13px; cursor: pointer; touch-action: manipulation; }
+
+/* 停止ボタン */
+.send-btn.stop-mode { background: #ef4444 !important; }
 </style>
 </head>
 <body>
@@ -292,18 +308,30 @@ function renderMsgs() {
     </div>`;
     return;
   }
+  const lastAiIdx = [...c.messages].map((m,i)=>m.role==='assistant'?i:-1).filter(i=>i>=0).pop();
   el.innerHTML = c.messages.map((m, i) => {
     if (m.role === 'user') {
-      return `<div class="flex justify-end mb-3">
-        <div class="chat-bubble-user px-4 py-3 max-w-[82%] text-sm leading-relaxed">${fmtUser(m.content)}</div>
+      return `<div class="flex justify-end mb-1" id="msg-${i}">
+        <div class="flex flex-col items-end gap-1 max-w-[82%]">
+          <div class="chat-bubble-user px-4 py-3 text-sm leading-relaxed">${fmtUser(m.content)}</div>
+          <div class="msg-actions justify-end">
+            <button class="msg-action-btn" ontouchend="tapEditMsg(${i},event)" onclick="editMsg(${i})">✏️ 編集</button>
+            <button class="msg-action-btn danger" ontouchend="tapDelMsg(${i},event)" onclick="delMsg(${i})">削除</button>
+          </div>
+        </div>
       </div>`;
     } else {
-      return `<div class="flex gap-2 mb-5">
+      const isLast = i === lastAiIdx;
+      return `<div class="flex gap-2 mb-4" id="msg-${i}">
         <div class="avatar flex-shrink-0 self-start mt-1" style="width:32px;height:32px;font-size:13px;background:${c.color||'#667eea'}">${(c.name||'?')[0]}</div>
         <div class="flex flex-col gap-0.5 max-w-[84%]">
           <div class="text-xs text-gray-400 ml-1">${esc(c.name)}</div>
           <div class="chat-bubble-ai px-4 py-3">
             <div class="prose-ai">${esc(m.content)}</div>
+          </div>
+          <div class="msg-actions ml-1">
+            <button class="msg-action-btn" ontouchend="tapCopyMsg(${i},event)" onclick="copyMsg(${i})">コピー</button>
+            ${isLast ? `<button class="msg-action-btn" ontouchend="tapRegen(event)" onclick="regenLast()">🔄 再生成</button>` : ''}
           </div>
         </div>
       </div>`;
@@ -337,29 +365,37 @@ document.addEventListener('DOMContentLoaded', () => {
 // ============================================================
 // SEND MESSAGE
 // ============================================================
-async function sendMsg() {
-  if (S.streaming) return;
-  const input = document.getElementById('chat-input');
-  const text = (input.value || '').trim();
-  if (!text) return;
+let abortController = null;
 
-  const c = getChar();
-  if (!c) return;
+function setSendBtnState(streaming) {
+  const btn = document.querySelector('.send-btn');
+  if (!btn) return;
+  if (streaming) {
+    btn.classList.add('stop-mode');
+    btn.disabled = false;
+    btn.innerHTML = `<svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
+    btn.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); stopStreaming(); };
+    btn.onclick = stopStreaming;
+  } else {
+    btn.classList.remove('stop-mode');
+    btn.disabled = false;
+    btn.innerHTML = `<svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
+    btn.ontouchend = handleSendTouch;
+    btn.onclick = sendMsg;
+  }
+}
 
-  if (!c.messages) c.messages = [];
-  c.messages.push({ role: 'user', content: text });
-  input.value = '';
-  input.style.height = 'auto';
-  renderMsgs();
-  scrollBottom(false);
-  saveState();
+function stopStreaming() {
+  if (abortController) abortController.abort();
+}
 
+async function streamAIResponse(c) {
   const el = document.getElementById('chat-messages');
+  if (!el) return;
 
-  // タイピング表示
   const typingEl = document.createElement('div');
   typingEl.id = 'typing';
-  typingEl.className = 'flex gap-2 mb-5';
+  typingEl.className = 'flex gap-2 mb-4';
   typingEl.innerHTML = `
     <div class="avatar flex-shrink-0" style="width:32px;height:32px;font-size:13px;background:${c.color||'#667eea'}">${(c.name||'?')[0]}</div>
     <div class="flex flex-col gap-0.5">
@@ -374,7 +410,7 @@ async function sendMsg() {
   scrollBottom();
 
   S.streaming = true;
-  document.querySelector('.send-btn').disabled = true;
+  setSendBtnState(true);
 
   try {
     if (!S.apiKey) throw new Error('APIキーが未設定です。設定（歯車）から入力してください。');
@@ -383,6 +419,7 @@ async function sendMsg() {
     const sys = buildSystem(c);
     const msgs = buildMsgs(c);
 
+    abortController = new AbortController();
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -392,6 +429,7 @@ async function sendMsg() {
         'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({ model, max_tokens: 1200, system: sys, messages: msgs, stream: true }),
+      signal: abortController.signal,
     });
 
     if (!res.ok) {
@@ -401,9 +439,8 @@ async function sendMsg() {
 
     typingEl.remove();
 
-    // ストリーミングバブル
     const streamEl = document.createElement('div');
-    streamEl.className = 'flex gap-2 mb-5';
+    streamEl.className = 'flex gap-2 mb-4';
     streamEl.innerHTML = `
       <div class="avatar flex-shrink-0" style="width:32px;height:32px;font-size:13px;background:${c.color||'#667eea'}">${(c.name||'?')[0]}</div>
       <div class="flex flex-col gap-0.5 max-w-[84%]">
@@ -443,27 +480,135 @@ async function sendMsg() {
     }
 
     streamText.classList.remove('streaming');
-    c.messages.push({ role: 'assistant', content: fullText });
-    saveState();
-
-    // 6メッセージ（3往復）ごとに自動要約＋ナラティブ更新
-    if (c.messages.length % 6 === 0) autoSummarize(c);
+    if (fullText) {
+      c.messages.push({ role: 'assistant', content: fullText });
+      saveState();
+      if (c.messages.length % 6 === 0) autoSummarize(c);
+    }
+    renderMsgs();
 
   } catch(err) {
     typingEl.remove();
-    const errEl = document.createElement('div');
-    errEl.className = 'mx-2 mb-3 px-4 py-3 bg-red-50 text-red-500 text-sm rounded-xl text-center';
-    errEl.textContent = err.message;
-    el.appendChild(errEl);
-    // エラーならユーザーメッセージを取り消す
-    c.messages.pop();
-    saveState();
-    renderMsgs();
+    if (err.name === 'AbortError') {
+      // 停止した場合は途中テキストを保存
+      const streamText = document.getElementById('stream-text');
+      const partial = streamText?.textContent || '';
+      if (partial) {
+        c.messages.push({ role: 'assistant', content: partial + '\n\n（停止されました）' });
+        saveState();
+      }
+      renderMsgs();
+    } else {
+      const errEl = document.createElement('div');
+      errEl.className = 'mx-2 mb-3 px-4 py-3 bg-red-50 text-red-500 text-sm rounded-xl text-center';
+      errEl.textContent = err.message;
+      el.appendChild(errEl);
+    }
   }
 
   S.streaming = false;
-  document.querySelector('.send-btn').disabled = false;
+  abortController = null;
+  setSendBtnState(false);
   scrollBottom();
+}
+
+async function sendMsg() {
+  if (S.streaming) return;
+  const input = document.getElementById('chat-input');
+  const text = (input.value || '').trim();
+  if (!text) return;
+
+  const c = getChar(); if (!c) return;
+  if (!c.messages) c.messages = [];
+  c.messages.push({ role: 'user', content: text });
+  input.value = '';
+  input.style.height = 'auto';
+  renderMsgs();
+  scrollBottom(false);
+  saveState();
+
+  await streamAIResponse(c);
+}
+
+// 再生成
+async function regenLast() {
+  if (S.streaming) return;
+  const c = getChar(); if (!c) return;
+  if (!c.messages?.length) return;
+  // 最後のassistantメッセージを削除
+  if (c.messages[c.messages.length - 1].role === 'assistant') {
+    c.messages.pop();
+    saveState();
+  }
+  renderMsgs();
+  scrollBottom(false);
+  await streamAIResponse(c);
+}
+
+// メッセージ編集
+function editMsg(idx) {
+  const c = getChar(); if (!c) return;
+  const m = c.messages[idx]; if (!m || m.role !== 'user') return;
+  const container = document.getElementById(`msg-${idx}`);
+  if (!container) return;
+  container.innerHTML = `
+    <div class="flex flex-col items-end w-full">
+      <div class="edit-mode-wrap w-full">
+        <textarea id="edit-ta-${idx}" rows="3" style="width:100%">${escRaw(m.content)}</textarea>
+        <div class="edit-mode-actions">
+          <button class="edit-cancel-btn" ontouchend="tapCancelEdit(${idx},event)" onclick="cancelEditMsg(${idx})">キャンセル</button>
+          <button class="edit-confirm-btn" ontouchend="tapConfirmEdit(${idx},event)" onclick="confirmEditMsg(${idx})">送信</button>
+        </div>
+      </div>
+    </div>`;
+  const ta = document.getElementById(`edit-ta-${idx}`);
+  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+
+async function confirmEditMsg(idx) {
+  if (S.streaming) return;
+  const c = getChar(); if (!c) return;
+  const ta = document.getElementById(`edit-ta-${idx}`);
+  const newText = ta ? ta.value.trim() : '';
+  if (!newText) return;
+  c.messages[idx].content = newText;
+  c.messages = c.messages.slice(0, idx + 1);
+  saveState();
+  renderMsgs();
+  scrollBottom(false);
+  await streamAIResponse(c);
+}
+
+function cancelEditMsg(idx) {
+  renderMsgs();
+}
+
+function delMsg(idx) {
+  const c = getChar(); if (!c) return;
+  c.messages.splice(idx, 1);
+  saveState();
+  renderMsgs();
+}
+
+function copyMsg(idx) {
+  const c = getChar(); if (!c) return;
+  const m = c.messages[idx]; if (!m) return;
+  navigator.clipboard?.writeText(m.content).catch(()=>{});
+  // 一時的にボタンテキスト変更
+  const btn = document.querySelector(`#msg-${idx} .msg-action-btn`);
+  if (btn) { btn.textContent = 'コピーしました'; setTimeout(()=>{ btn.textContent = 'コピー'; }, 1500); }
+}
+
+// タッチイベントハンドラ
+function tapEditMsg(idx, e) { e.preventDefault(); editMsg(idx); }
+function tapDelMsg(idx, e) { e.preventDefault(); delMsg(idx); }
+function tapCopyMsg(idx, e) { e.preventDefault(); copyMsg(idx); }
+function tapRegen(e) { e.preventDefault(); regenLast(); }
+function tapConfirmEdit(idx, e) { e.preventDefault(); confirmEditMsg(idx); }
+function tapCancelEdit(idx, e) { e.preventDefault(); cancelEditMsg(idx); }
+
+function escRaw(str) {
+  return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ============================================================
