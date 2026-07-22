@@ -188,19 +188,20 @@ function saveState() {
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    // 旧データも読み込む
     const rawOld = localStorage.getItem('karapu_state');
     if (raw) {
       const saved = JSON.parse(raw);
       S = { ...S, ...saved };
     } else if (rawOld) {
       const old = JSON.parse(rawOld);
-      // 旧フォーマットを変換
       if (old.characters) S.chars = old.characters.map(c => ({...c, messages: c.messages||[]}));
       if (old.settings?.apiKey) S.apiKey = old.settings.apiKey;
-      if (old.settings?.model) S.model = old.settings.model;
       saveState();
     }
+    // 全キャラをハイパーに統一（既存データ移行）
+    S.chars.forEach(c => { if (!c.plan || c.plan === 'prime') c.plan = 'hyper'; });
+    S.streaming = false;
+    saveState();
   } catch(e) { console.error('Load failed', e); }
 }
 
@@ -445,8 +446,8 @@ async function sendMsg() {
     c.messages.push({ role: 'assistant', content: fullText });
     saveState();
 
-    // 10メッセージごとに自動要約
-    if (c.messages.length % 10 === 0) autoSummarize(c);
+    // 6メッセージ（3往復）ごとに自動要約＋ナラティブ更新
+    if (c.messages.length % 6 === 0) autoSummarize(c);
 
   } catch(err) {
     typingEl.remove();
@@ -466,7 +467,7 @@ async function sendMsg() {
 }
 
 // ============================================================
-// SYSTEM PROMPT
+// SYSTEM PROMPT（常に完全な情報を含む）
 // ============================================================
 function buildSystem(c) {
   const styles = {
@@ -475,8 +476,11 @@ function buildSystem(c) {
     diary: `${c.name}の一人称視点の日記・独白スタイルで返答してください。`,
   };
   const mem = buildMemCtx(c);
+  const narrative = c.narrative ? `【これまでのストーリー要約】\n${c.narrative}\n` : '';
+
   return `あなたは「${c.name}」を中心とした登場キャラクター全員を演じながら、ユーザーとインタラクティブなロールプレイストーリーを展開するAIです。
 
+━━━━━━━━━━━━━━━━━━━━━
 【キャラクター・人間関係設定】
 ${c.profile || '（設定なし）'}
 
@@ -485,66 +489,103 @@ ${c.worldSetting || '（設定なし）'}
 
 【主人公（ユーザー）の名前】
 ${c.userName || 'みき'}
+━━━━━━━━━━━━━━━━━━━━━
 
 【返答スタイル】
 ${styles[c.aiStyle] || styles.novel}
 
 【入力フォーマット】
-- **シチュエーション** → **で囲まれた部分は場面・行動・状況の描写
-- 「セリフ」 → 「」で囲まれた部分は主人公のセリフ
+- **シチュエーション** → 場面・行動・状況の描写
+- 「セリフ」 → 主人公のセリフ
 
-ユーザーの入力を受け取り、ストーリーとして膨らませて返答してください。登場キャラクターを自然に動かし、情景・心理描写を豊かに書いてください。
+━━━━━━━━━━━━━━━━━━━━━
+${narrative}${mem ? `【記憶・ストーリー記録】\n${mem}\n` : ''}━━━━━━━━━━━━━━━━━━━━━
 
-${mem ? `【記憶・ストーリー記録】\n${mem}\n` : ''}
-重要：
-- AIであることに言及しない
+重要ルール：
+- AIであることに絶対言及しない
+- 上記のキャラクター設定・記憶・ストーリー要約を必ず参照し、設定を忘れない
 - ストーリーの連続性・キャラクターの一貫性を必ず守る
 - 必ず日本語で返答する
-- 返答は読み応えのある長さで書く（短すぎない）`;
+- 返答は読み応えのある長さで書く（500〜1000文字程度）
+- 次の展開への期待感を持たせる終わり方をする`;
 }
 
 function buildMemCtx(c) {
   if (!c.memory) return '';
   const parts = [];
-  if (c.memory.long?.length) parts.push('【長期記憶】\n' + c.memory.long.map(m=>`・${m.title}: ${m.content}`).join('\n'));
-  if (c.memory.short?.length) parts.push('【短期記憶（最近）】\n' + c.memory.short.map(m=>`・${m.title}: ${m.content}`).join('\n'));
-  if (c.memory.relation?.length) parts.push('【関係図】\n' + c.memory.relation.map(m=>`・${m.title}: ${m.content}`).join('\n'));
-  if (c.memory.goal?.length) parts.push('【目標・フラグ】\n' + c.memory.goal.map(m=>`・${m.title}: ${m.content}`).join('\n'));
+  if (c.memory.relation?.length) parts.push('【登場人物の関係】\n' + c.memory.relation.map(m=>`・${m.title}: ${m.content}`).join('\n'));
+  if (c.memory.long?.length) parts.push('【長期記憶（重要な過去の出来事）】\n' + c.memory.long.map(m=>`・${m.title}: ${m.content}`).join('\n'));
+  if (c.memory.short?.length) parts.push('【短期記憶（直近の展開）】\n' + c.memory.short.map(m=>`・${m.title}: ${m.content}`).join('\n'));
+  if (c.memory.goal?.length) parts.push('【目標・今後のフラグ】\n' + c.memory.goal.map(m=>`・${m.title}: ${m.content}`).join('\n'));
   return parts.join('\n\n');
 }
 
+// APIに送るメッセージ（直近12件に絞る＝軽量化＋確実に動く）
 function buildMsgs(c) {
   if (!c.messages) return [];
-  return c.messages.slice(-30).map(m => ({ role: m.role, content: m.content }));
+  // 直近12件のみ（設定・記憶・ナラティブでカバーするため少なくてOK）
+  return c.messages.slice(-12).map(m => ({ role: m.role, content: m.content }));
 }
 
 // ============================================================
-// 自動要約
+// 自動要約＋ナラティブ更新（6メッセージごと）
 // ============================================================
 async function autoSummarize(c) {
   if (!S.apiKey) return;
   try {
-    const recent = c.messages.slice(-10);
+    const recent = c.messages.slice(-6);
     const convText = recent.map(m => `${m.role==='user'?c.userName:c.name}: ${m.content}`).join('\n\n');
+    const prevNarrative = c.narrative || '';
+
+    const prompt = `あなたはロールプレイストーリーの記録係です。以下の情報を元に2つのタスクをこなしてください。
+
+【これまでのストーリー要約】
+${prevNarrative || '（まだなし）'}
+
+【直近の会話】
+${convText}
+
+タスク1: 直近の会話を短期記憶として3〜4つの箇条書きに要約
+タスク2: ストーリー全体の要約を300文字以内で更新（これまでの要約＋直近の展開を統合）
+
+以下のJSON形式で返してください：
+{
+  "short": [{"title":"タイトル","content":"内容"}],
+  "narrative": "ストーリー全体の要約文"
+}`;
+
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type':'application/json','x-api-key':S.apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 600,
-        messages: [{ role:'user', content:`以下のロールプレイ会話を短期記憶として3〜5つ要約してください。JSON配列で返してください。\n形式: [{"title":"タイトル","content":"内容"}]\n\n会話:\n${convText}` }]
+        max_tokens: 800,
+        messages: [{ role:'user', content: prompt }]
       }),
     });
     const data = await res.json();
-    const match = data.content[0].text.match(/\[[\s\S]*\]/);
+    const text = data.content[0].text;
+    const match = text.match(/\{[\s\S]*\}/);
     if (match) {
-      const summaries = JSON.parse(match[0]);
+      const result = JSON.parse(match[0]);
       if (!c.memory) c.memory = { long:[], short:[], relation:[], goal:[] };
-      c.memory.long = [...(c.memory.long||[]), ...(c.memory.short||[])].slice(-60);
-      c.memory.short = summaries.map(s => ({ ...s, id: Date.now()+Math.random() }));
+      // 古い短期記憶を長期に昇格
+      c.memory.long = [...(c.memory.long||[]), ...(c.memory.short||[])].slice(-80);
+      if (result.short) c.memory.short = result.short.map(s => ({ ...s, id: Date.now()+Math.random() }));
+      if (result.narrative) c.narrative = result.narrative;
       saveState();
+      // メモリーインジケーター表示
+      showMemBadge();
     }
   } catch(e) { console.error('autoSummarize error', e); }
+}
+
+function showMemBadge() {
+  const el = document.createElement('div');
+  el.className = 'text-center text-xs text-purple-400 py-1 opacity-70';
+  el.textContent = '✦ メモリー更新';
+  document.getElementById('chat-messages')?.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
 }
 
 // ============================================================
