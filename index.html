@@ -428,7 +428,7 @@ async function streamAIResponse(c) {
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({ model, max_tokens: 1500, system: sys, messages: msgs, stream: true }),
+      body: JSON.stringify({ model, max_tokens: 2000, system: sys, messages: msgs, stream: true }),
       signal: abortController.signal,
     });
 
@@ -651,10 +651,12 @@ ${narrative}${mem ? `【記憶・ストーリー記録】\n${mem}\n` : ''}━━
 - 上記のキャラクター設定・記憶・ストーリー要約を必ず参照し、設定を忘れない
 - ストーリーの連続性・キャラクターの一貫性を必ず守る
 - 必ず日本語で返答する
-- 返答は400〜700文字程度を目安にコンパクトにまとめる
-- 次の展開への期待感を持たせる終わり方をする
-- 「…」「。。」の多用は避ける。改行は意味のある区切りにのみ使い、無駄な空白行を入れない
-- 句読点は自然なテンポで使い、一文に「。」を詰め込みすぎない`;
+- 返答は必ず600文字以内に収める。絶対にこの文字数を超えないこと
+- 次の展開への期待感を持たせる自然な区切りで終わる
+- 「…」は1返答につき最大2回まで。それ以上は使わない
+- 段落間の空白行は入れない。改行は会話・場面転換のみ
+- 「。」で文を終わらせすぎない。体言止めや余韻のある終わり方を混ぜる
+- テンポよく読めるリズムを意識する`;
 }
 
 function buildMemCtx(c) {
