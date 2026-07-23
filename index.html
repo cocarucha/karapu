@@ -662,18 +662,17 @@ ${narrative}${mem ? `【記憶・ストーリー記録】\n${mem}\n` : ''}━━
 function buildMemCtx(c) {
   if (!c.memory) return '';
   const parts = [];
-  if (c.memory.relation?.length) parts.push('【登場人物の関係】\n' + c.memory.relation.map(m=>`・${m.title}: ${m.content}`).join('\n'));
-  if (c.memory.long?.length) parts.push('【長期記憶（重要な過去の出来事）】\n' + c.memory.long.map(m=>`・${m.title}: ${m.content}`).join('\n'));
-  if (c.memory.short?.length) parts.push('【短期記憶（直近の展開）】\n' + c.memory.short.map(m=>`・${m.title}: ${m.content}`).join('\n'));
-  if (c.memory.goal?.length) parts.push('【目標・今後のフラグ】\n' + c.memory.goal.map(m=>`・${m.title}: ${m.content}`).join('\n'));
+  if (c.memory.relation?.length) parts.push('【登場人物の関係】\n' + c.memory.relation.slice(-10).map(m=>`・${m.title}: ${m.content}`).join('\n'));
+  if (c.memory.long?.length) parts.push('【長期記憶】\n' + c.memory.long.slice(-15).map(m=>`・${m.title}: ${m.content}`).join('\n'));
+  if (c.memory.short?.length) parts.push('【短期記憶】\n' + c.memory.short.slice(-5).map(m=>`・${m.title}: ${m.content}`).join('\n'));
+  if (c.memory.goal?.length) parts.push('【目標】\n' + c.memory.goal.slice(-5).map(m=>`・${m.title}: ${m.content}`).join('\n'));
   return parts.join('\n\n');
 }
 
-// APIに送るメッセージ（直近12件に絞る＝軽量化＋確実に動く）
+// APIに送るメッセージ（直近6件に絞る＝ナラティブで補完）
 function buildMsgs(c) {
   if (!c.messages) return [];
-  // 直近12件のみ（設定・記憶・ナラティブでカバーするため少なくてOK）
-  return c.messages.slice(-12).map(m => ({ role: m.role, content: m.content }));
+  return c.messages.slice(-6).map(m => ({ role: m.role, content: m.content }));
 }
 
 // ============================================================
@@ -719,7 +718,7 @@ ${convText}
       const result = JSON.parse(match[0]);
       if (!c.memory) c.memory = { long:[], short:[], relation:[], goal:[] };
       // 古い短期記憶を長期に昇格
-      c.memory.long = [...(c.memory.long||[]), ...(c.memory.short||[])].slice(-80);
+      c.memory.long = [...(c.memory.long||[]), ...(c.memory.short||[])].slice(-30);
       if (result.short) c.memory.short = result.short.map(s => ({ ...s, id: Date.now()+Math.random() }));
       if (result.narrative) c.narrative = result.narrative;
       saveState();
